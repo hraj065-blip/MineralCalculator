@@ -1,0 +1,7 @@
+Flask
+pandas
+pdfplumber
+openpyxl
+xlsxwriter
+google-generativeai
+werkzeug

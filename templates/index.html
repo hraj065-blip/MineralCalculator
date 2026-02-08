@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Goa Mineral Foundation | Assessment Portal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        .upload-card { transition: all 0.3s ease; }
+        .upload-card.active { border-color: #2563eb; background-color: #eff6ff; }
+        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #2563eb; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen text-slate-800">
+
+    <nav class="bg-slate-900 text-white shadow-lg sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="flex items-center gap-4">
+                <div class="bg-blue-600 p-2 rounded-lg">
+                    <i class="fa-solid fa-file-invoice-dollar text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight">Mineral Foundation of Goa</h1>
+                    <p class="text-xs text-slate-400 font-medium uppercase tracking-wider">Revenue Assessment System v2.1</p>
+                </div>
+            </div>
+            <div class="hidden md:flex items-center gap-2 px-3 py-1 bg-slate-800 rounded-full border border-slate-700">
+                <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                <span class="text-xs text-slate-300 font-semibold">Secure Server Connected</span>
+            </div>
+        </div>
+    </nav>
+
+    <main class="flex-grow p-6 flex items-center justify-center">
+        <div class="w-full max-w-5xl grid lg:grid-cols-12 gap-8">
+            
+            <div class="lg:col-span-5 space-y-6 pt-8">
+                <h2 class="text-4xl font-extrabold text-slate-900 tracking-tight leading-tight">
+                    Smart Royalty <br><span class="text-blue-600">Computation</span>
+                </h2>
+                <p class="text-slate-600 text-lg leading-relaxed">
+                    Automate the calculation of Mineral Royalties and District Mineral Foundation (DMF) contributions. 
+                </p>
+                
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                    <h3 class="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                        <i class="fa-solid fa-list-check text-blue-500"></i> Verification Protocol
+                    </h3>
+                    <ul class="space-y-3 text-sm text-slate-600">
+                        <li class="flex items-start gap-3">
+                            <i class="fa-solid fa-check text-green-500 mt-1"></i>
+                            <span>Auto-maps codes (e.g., 'L' → 'Lumps')</span>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <i class="fa-solid fa-check text-green-500 mt-1"></i>
+                            <span>Extracts Goa-specific rates from IBM PDF</span>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <i class="fa-solid fa-triangle-exclamation text-amber-500 mt-1"></i>
+                            <span>Flags "NA" rates or missing grades</span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="lg:col-span-7">
+                <div class="bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden relative">
+                    
+                    <div class="bg-slate-50 px-8 py-6 border-b border-slate-100 flex justify-between items-center">
+                        <h3 class="font-bold text-slate-800">New Assessment</h3>
+                        <span id="status-badge" class="px-3 py-1 rounded-full bg-slate-200 text-slate-500 text-xs font-bold">Ready</span>
+                    </div>
+
+                    <div id="loader-overlay" class="hidden absolute inset-0 bg-white/90 z-20 flex flex-col items-center justify-center">
+                        <div class="w-12 h-12 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
+                        <h4 class="text-lg font-bold text-slate-800">Processing Data</h4>
+                        <p class="text-slate-500 text-sm">Generating Excel Report...</p>
+                    </div>
+
+                    <form action="/" method="post" enctype="multipart/form-data" class="p-8 space-y-6" onsubmit="startProcessing()">
+                        
+                        {% with messages = get_flashed_messages() %}
+                          {% if messages %}
+                            <div class="bg-red-50 border-l-4 border-red-500 p-4 rounded-md">
+                                {% for message in messages %}<p class="text-red-700 text-sm font-medium">{{ message }}</p>{% endfor %}
+                            </div>
+                          {% endif %}
+                        {% endwith %}
+
+                        <div>
+                            <label class="block text-sm font-semibold text-slate-700 mb-2">1. Mineral Returns (.xlsx)</label>
+                            <div class="relative group">
+                                <input type="file" id="f1" name="mineral_file" accept=".xlsx" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" required onchange="handleFile('f1', 'box1', 'txt1')">
+                                <div id="box1" class="upload-card border-2 border-dashed border-slate-300 rounded-xl p-4 flex items-center gap-4 group-hover:border-blue-500">
+                                    <div class="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center text-green-600">
+                                        <i class="fa-solid fa-file-excel text-lg"></i>
+                                    </div>
+                                    <div class="overflow-hidden">
+                                        <p id="txt1" class="font-medium text-slate-600 truncate">Select Mineral Data</p>
+                                        <p class="text-xs text-slate-400">Excel format required</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-semibold text-slate-700 mb-2">2. IBM Price List (.pdf)</label>
+                            <div class="relative group">
+                                <input type="file" id="f2" name="price_file" accept=".pdf" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" required onchange="handleFile('f2', 'box2', 'txt2')">
+                                <div id="box2" class="upload-card border-2 border-dashed border-slate-300 rounded-xl p-4 flex items-center gap-4 group-hover:border-blue-500">
+                                    <div class="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center text-red-600">
+                                        <i class="fa-solid fa-file-pdf text-lg"></i>
+                                    </div>
+                                    <div class="overflow-hidden">
+                                        <p id="txt2" class="font-medium text-slate-600 truncate">Select Periodical PDF</p>
+                                        <p class="text-xs text-slate-400">Government Gazette</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="pt-2">
+                            <button type="submit" id="btn-submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg transition transform active:scale-[0.98] flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-calculator"></i>
+                                <span>Calculate & Download</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="bg-white border-t border-slate-200 py-8 text-center">
+        <p class="text-slate-400 text-sm">&copy; 2024 District Mineral Foundation. All rights reserved.</p>
+    </footer>
+
+    <script>
+        function handleFile(inputId, boxId, textId) {
+            const input = document.getElementById(inputId);
+            const box = document.getElementById(boxId);
+            const txt = document.getElementById(textId);
+            
+            if(input.files && input.files[0]) {
+                txt.textContent = input.files[0].name;
+                txt.classList.add('text-slate-900');
+                box.classList.add('active');
+            }
+        }
+
+        function startProcessing() {
+            document.getElementById('loader-overlay').classList.remove('hidden');
+            const btn = document.getElementById('btn-submit');
+            btn.disabled = true;
+            btn.classList.add('opacity-50');
+        }
+    </script>
+</body>
+</html>
