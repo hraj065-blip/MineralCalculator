@@ -5,3 +5,4 @@ openpyxl
 xlsxwriter
 google-generativeai
 werkzeug
+gunicorn
