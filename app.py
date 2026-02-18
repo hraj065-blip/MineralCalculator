@@ -21,7 +21,7 @@ GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
 ORE_FULL_FORMS = {
     'L': 'Iron Ore (Lumps)',
     'F': 'Iron Ore (Fines)',
-    'C': 'Concentrates',
+    'C': 'Iron Ore (Concentrates)',
     'M': 'Manganese',
     'B': 'Bauxite'     
 }
@@ -32,7 +32,8 @@ GRADE_FULL_FORMS = {
     'C': '58% to below 60% Fe',
     'D': '60% to below 62% Fe',
     'E': '62% to below 65% Fe',
-    'F': '65% Fe and above'
+    'F': '65% Fe and above',
+    'Unknown': 'No Grade Applicable'
 }
 
 # --- 2. DATA CLEANING & MATCHING ---
@@ -46,14 +47,20 @@ def clean_currency(value):
         return 0.0
 
 def get_grade_code(grade_str):
+    """Maps grades to A-F strictly without cross-contamination"""
     if pd.isna(grade_str): return 'Unknown'
     s = str(grade_str).strip().upper()
     if s in GRADE_FULL_FORMS: return s
     
     s_lower = s.lower()
-    if 'below' in s_lower and '55' in s_lower: return 'A'
-    if '65' in s_lower and 'above' in s_lower: return 'F'
     
+    # Text-based overrides (STRICT)
+    if 'below' in s_lower and '55' in s_lower and '58' not in s_lower: return 'A'
+    if '<' in s_lower and '55' in s_lower: return 'A'
+    if '65' in s_lower and 'above' in s_lower: return 'F'
+    if '>' in s_lower and '65' in s_lower: return 'F'
+    
+    # Number extraction fallback
     nums = re.findall(r'\d+', s)
     if not nums: return 'Unknown'
     val = int(nums[0])
@@ -77,7 +84,7 @@ def get_ore_type(ore_str):
     if 'conc' in s: return 'C'
     return None
 
-# --- 3. TWO-COLUMN PDF ENGINE (THE FIX) ---
+# --- 3. TWO-COLUMN PDF ENGINE ---
 
 def get_pdf_text_single_column(pdf_path):
     """Crops the PDF pages in half to prevent 2-column text mixing."""
@@ -86,17 +93,12 @@ def get_pdf_text_single_column(pdf_path):
         for page in pdf.pages:
             w = page.width
             h = page.height
-            
-            # Extract Left Column
             left_box = (0, 0, w * 0.5, h)
             left_text = page.within_bbox(left_box).extract_text()
             if left_text: full_text += left_text + "\n"
-            
-            # Extract Right Column
             right_box = (w * 0.5, 0, w, h)
             right_text = page.within_bbox(right_box).extract_text()
             if right_text: full_text += right_text + "\n"
-            
     return full_text
 
 def extract_prices_regex(text):
@@ -111,7 +113,7 @@ def extract_prices_regex(text):
     start_idx = match.end()
     
     # Find the next state to cap the search block
-    states = ['Gujarat', 'Haryana', 'Himachal', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya', 'Maharashtra', 'Odisha']
+    states = ['Gujarat', 'Haryana', 'Himachal', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya', 'Maharashtra', 'Odisha', 'Rajasthan', 'Tamil', 'Telangana']
     state_pattern = r'\b(' + '|'.join(states) + r')\b'
     end_match = re.search(state_pattern, text[start_idx:], re.IGNORECASE)
     
@@ -132,16 +134,12 @@ def extract_prices_regex(text):
         
         if current_ore:
             price = None
-            
-            # Check for NA
             if re.search(r'\bna\b\s*$', line_lower):
                 price = 0.0
             else:
-                # Look for number at the end of the line
                 price_match = re.search(r'(\d{2,5})\s*$', line.strip())
                 if price_match:
                     price = float(price_match.group(1))
-                # Look for number on the NEXT line (if column was narrow)
                 elif i + 1 < len(lines):
                     next_line = lines[i+1].strip()
                     if next_line.lower() == 'na':
@@ -149,31 +147,34 @@ def extract_prices_regex(text):
                     elif next_line.replace(',', '').isdigit():
                         price = float(next_line.replace(',', ''))
                         
-            # Map price to the Grade
+            # STRICT Mapping (Fixes the Overwrite Bug)
             if price is not None:
-                if 'below' in line_lower and '55' in line_lower: prices[current_ore]['A'] = price
-                elif '55' in line_lower and '58' in line_lower: prices[current_ore]['B'] = price
-                elif '58' in line_lower and '60' in line_lower: prices[current_ore]['C'] = price
-                elif '60' in line_lower and '62' in line_lower: prices[current_ore]['D'] = price
-                elif '62' in line_lower and '65' in line_lower: prices[current_ore]['E'] = price
-                elif '65' in line_lower and 'above' in line_lower: prices[current_ore]['F'] = price
+                if 'below' in line_lower and '55' in line_lower and '58' not in line_lower: 
+                    prices[current_ore]['A'] = price
+                elif '55' in line_lower and '58' in line_lower: 
+                    prices[current_ore]['B'] = price
+                elif '58' in line_lower and '60' in line_lower: 
+                    prices[current_ore]['C'] = price
+                elif '60' in line_lower and '62' in line_lower: 
+                    prices[current_ore]['D'] = price
+                elif '62' in line_lower and '65' in line_lower: 
+                    prices[current_ore]['E'] = price
+                elif '65' in line_lower and 'above' in line_lower: 
+                    prices[current_ore]['F'] = price
+                elif current_ore == 'C': 
+                    prices['C']['Unknown'] = price
                 
     return prices
 
 # --- 4. EXCEL PROCESSING ---
 
 def process_data(excel_path, pdf_path):
-    # 1. Convert PDF to perfectly clean single-column text
     clean_pdf_text = get_pdf_text_single_column(pdf_path)
-    
-    # 2. Extract Prices
     prices = extract_prices_regex(clean_pdf_text)
     
-    # 3. Parse Excel
     try: df = pd.read_excel(excel_path, header=0)
     except: df = pd.read_excel(excel_path, header=1)
     
-    # 4. Process Math
     output_rows = []
     for _, row in df.iterrows():
         qty_col = next((col for col in df.columns if 'quantity' in col.lower()), 'Quantity')
@@ -193,6 +194,9 @@ def process_data(excel_path, pdf_path):
         
         if not ore_code:
             status = "Error: Invalid Ore Type"
+        elif ore_code == 'C':
+            if 'C' in prices and 'Unknown' in prices['C']: rate = prices['C']['Unknown']
+            else: status = "Rate Not Found (NA in Gazette)"
         elif grade_code == 'Unknown':
             status = "Error: Invalid Grade"
         elif ore_code in prices and grade_code in prices[ore_code]:
@@ -216,7 +220,6 @@ def process_data(excel_path, pdf_path):
         })
         output_rows.append(data)
         
-    # 5. Generate Professional Report
     result_df = pd.DataFrame(output_rows)
     out_path = os.path.join(app.config['UPLOAD_FOLDER'], 'Final_DMF_Report.xlsx')
     
@@ -247,7 +250,6 @@ def process_data(excel_path, pdf_path):
     writer.close()
     return out_path
 
-# --- ROUTES ---
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
