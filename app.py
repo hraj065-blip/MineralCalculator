@@ -77,110 +77,103 @@ def get_ore_type(ore_str):
     if 'conc' in s: return 'C'
     return None
 
-# --- 3. THE NEW STRICT PDF PARSER ---
+# --- 3. TWO-COLUMN PDF ENGINE (THE FIX) ---
+
+def get_pdf_text_single_column(pdf_path):
+    """Crops the PDF pages in half to prevent 2-column text mixing."""
+    full_text = ""
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            w = page.width
+            h = page.height
+            
+            # Extract Left Column
+            left_box = (0, 0, w * 0.5, h)
+            left_text = page.within_bbox(left_box).extract_text()
+            if left_text: full_text += left_text + "\n"
+            
+            # Extract Right Column
+            right_box = (w * 0.5, 0, w, h)
+            right_text = page.within_bbox(right_box).extract_text()
+            if right_text: full_text += right_text + "\n"
+            
+    return full_text
 
 def extract_prices_regex(text):
     prices = {"L": {}, "F": {}, "C": {}}
     
-    # Step 1: Strictly Isolate Goa Section
-    match = re.search(r'\bGoa\b', text, re.IGNORECASE)
+    # Strictly find Goa
+    match = re.search(r'^\s*Goa\s*$', text, re.MULTILINE | re.IGNORECASE)
+    if not match:
+        match = re.search(r'\bGoa\b', text, re.IGNORECASE)
     if not match: return prices
-    start_idx = match.start()
     
-    # Find the precise start of the next state (Gujarat) to prevent bleed-over
-    end_match = re.search(r'\bGujarat\b', text[start_idx:], re.IGNORECASE)
-    if end_match:
-        end_idx = start_idx + end_match.start()
-    else:
-        end_idx = start_idx + 1500 # Safe cutoff if Gujarat is missing
-        
+    start_idx = match.end()
+    
+    # Find the next state to cap the search block
+    states = ['Gujarat', 'Haryana', 'Himachal', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya', 'Maharashtra', 'Odisha']
+    state_pattern = r'\b(' + '|'.join(states) + r')\b'
+    end_match = re.search(state_pattern, text[start_idx:], re.IGNORECASE)
+    
+    end_idx = start_idx + end_match.start() if end_match else start_idx + 1500
     goa_text = text[start_idx:end_idx]
+    lines = goa_text.split('\n')
     
-    # Step 2: Flatten text to avoid PDF line-break errors
-    flat_text = goa_text.replace('\n', ' ').replace('"', '').replace(',', '')
+    current_ore = None
     
-    # Step 3: Find boundaries for Lumps, Fines, and Concentrates
-    indices = []
-    l_idx = flat_text.lower().find('lump')
-    f_idx = flat_text.lower().find('fine')
-    c_idx = flat_text.lower().find('conc')
-    
-    if l_idx != -1: indices.append(('L', l_idx))
-    if f_idx != -1: indices.append(('F', f_idx))
-    if c_idx != -1: indices.append(('C', c_idx))
-    
-    indices.sort(key=lambda x: x[1]) # Sort by appearance in text
-    
-    # Resilient Grade Patterns
-    grade_patterns = {
-        'A': r'below\s*55',
-        'B': r'55.*?58',
-        'C': r'58.*?60',
-        'D': r'60.*?62',
-        'E': r'62.*?65',
-        'F': r'65.*?above'
-    }
-    
-    # Step 4: Extract prices within isolated blocks
-    for i in range(len(indices)):
-        ore_type, start = indices[i]
-        # End of this block is the start of the next ore type, or end of Goa text
-        end = indices[i+1][1] if i + 1 < len(indices) else len(flat_text)
-        block = flat_text[start:end]
+    for i, line in enumerate(lines):
+        line_lower = line.lower()
         
-        for code, pattern in grade_patterns.items():
-            m = re.search(pattern, block, re.IGNORECASE)
-            if m:
-                # Look exactly at the next 40 characters following the grade text
-                snippet = block[m.end() : m.end()+40]
-                # Pull the first number it sees, or NA
-                val_match = re.search(r'(\d{2,5})|NA', snippet, re.IGNORECASE)
+        # Track context
+        if 'iron ore (lumps)' in line_lower: current_ore = 'L'
+        elif 'iron ore (fines)' in line_lower: current_ore = 'F'
+        elif 'iron ore conc' in line_lower or 'concentrates' in line_lower: current_ore = 'C'
+        elif 'bauxite' in line_lower or 'manganese' in line_lower: current_ore = None 
+        
+        if current_ore:
+            price = None
+            
+            # Check for NA
+            if re.search(r'\bna\b\s*$', line_lower):
+                price = 0.0
+            else:
+                # Look for number at the end of the line
+                price_match = re.search(r'(\d{2,5})\s*$', line.strip())
+                if price_match:
+                    price = float(price_match.group(1))
+                # Look for number on the NEXT line (if column was narrow)
+                elif i + 1 < len(lines):
+                    next_line = lines[i+1].strip()
+                    if next_line.lower() == 'na':
+                        price = 0.0
+                    elif next_line.replace(',', '').isdigit():
+                        price = float(next_line.replace(',', ''))
+                        
+            # Map price to the Grade
+            if price is not None:
+                if 'below' in line_lower and '55' in line_lower: prices[current_ore]['A'] = price
+                elif '55' in line_lower and '58' in line_lower: prices[current_ore]['B'] = price
+                elif '58' in line_lower and '60' in line_lower: prices[current_ore]['C'] = price
+                elif '60' in line_lower and '62' in line_lower: prices[current_ore]['D'] = price
+                elif '62' in line_lower and '65' in line_lower: prices[current_ore]['E'] = price
+                elif '65' in line_lower and 'above' in line_lower: prices[current_ore]['F'] = price
                 
-                if val_match and val_match.group(1): # It is a number, not NA
-                    prices[ore_type][code] = float(val_match.group(1))
-                    
     return prices
-
-def extract_prices_with_gemini(text_content):
-    """If Gemini API is used, pre-filter text so AI doesn't hallucinate other states."""
-    match = re.search(r'\bGoa\b', text_content, re.IGNORECASE)
-    if match:
-        start_idx = match.start()
-        end_match = re.search(r'\bGujarat\b', text_content[start_idx:], re.IGNORECASE)
-        end_idx = start_idx + end_match.start() if end_match else start_idx + 1500
-        safe_text = text_content[start_idx:end_idx]
-    else:
-        safe_text = text_content
-
-    try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"""Extract Goa Iron Ore Average Sale Price. Return JSON ONLY. Format: {{ "L": {{ "A": 0, "B": 0... }}, "F": {{ "A": 0... }} }} Use 0 for missing/NA. Text: {safe_text}"""
-        response = model.generate_content(prompt)
-        return json.loads(response.text.strip().replace('```json', '').replace('```', ''))
-    except: 
-        return None
 
 # --- 4. EXCEL PROCESSING ---
 
 def process_data(excel_path, pdf_path):
-    # 1. Parse PDF
-    full_text = ""
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages: full_text += page.extract_text() + "\n"
+    # 1. Convert PDF to perfectly clean single-column text
+    clean_pdf_text = get_pdf_text_single_column(pdf_path)
     
-    prices = {}
-    if GEMINI_API_KEY and GEMINI_API_KEY != "YOUR_GEMINI_API_KEY":
-        prices = extract_prices_with_gemini(full_text)
+    # 2. Extract Prices
+    prices = extract_prices_regex(clean_pdf_text)
     
-    if not prices:
-        prices = extract_prices_regex(full_text)
-    
-    # 2. Parse Excel
+    # 3. Parse Excel
     try: df = pd.read_excel(excel_path, header=0)
     except: df = pd.read_excel(excel_path, header=1)
     
-    # 3. Process Math
+    # 4. Process Math
     output_rows = []
     for _, row in df.iterrows():
         qty_col = next((col for col in df.columns if 'quantity' in col.lower()), 'Quantity')
@@ -223,7 +216,7 @@ def process_data(excel_path, pdf_path):
         })
         output_rows.append(data)
         
-    # 4. Generate Professional Report
+    # 5. Generate Professional Report
     result_df = pd.DataFrame(output_rows)
     out_path = os.path.join(app.config['UPLOAD_FOLDER'], 'Final_DMF_Report.xlsx')
     
